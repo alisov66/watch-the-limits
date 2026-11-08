@@ -37,9 +37,9 @@ public enum CodexExecutable {
     }
 }
 
-/// Only invokes initialize, initialized, and account/rateLimits/read.
+/// Reads usage and consumes a selected reset only after explicit user confirmation.
 /// Codex itself handles sign-in. Authentication files are never opened by this client.
-public actor CodexClient {
+public actor CodexClient: CodexUsageService {
     private var process: Process?
     private var input: FileHandle?
     private var reader: Task<Void, Never>?
@@ -51,6 +51,21 @@ public actor CodexClient {
     private var connectedPath: String?
 
     public init() {}
+
+    public func consumeReset(executablePath: String, creditID: String, idempotencyKey: String) async throws -> ResetOutcome {
+        guard !creditID.isEmpty, !idempotencyKey.isEmpty else { throw CodexError.invalidResponse }
+        do {
+            if connectedPath != executablePath { shutdown() }
+            if process == nil { try await connect(executablePath) }
+            let data = try await request("account/rateLimitResetCredit/consume", params: [
+                "creditId": creditID, "idempotencyKey": idempotencyKey
+            ])
+            return try JSONDecoder().decode(ResetResponse.self, from: data).outcome
+        } catch {
+            shutdown()
+            throw error
+        }
+    }
 
     public func readLimits(executablePath: String) async throws -> UsageSnapshot {
         do {
@@ -92,7 +107,7 @@ public actor CodexClient {
             await self?.didClose(generation: currentGeneration)
         }
         _ = try await request("initialize", params: [
-            "clientInfo": ["name": "watch_the_limits", "title": "Watch the Limits", "version": "0.5.0"]
+            "clientInfo": ["name": "watch_the_limits", "title": "Watch the Limits", "version": "0.6.0"]
         ])
         try send(["method": "initialized"])
     }

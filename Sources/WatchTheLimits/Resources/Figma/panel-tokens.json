@@ -1,7 +1,9 @@
 {
   "source": {
     "file": "zCrkvUn8WyWUKH3YYn6QB0",
-    "node": "63:4813"
+    "node": "128:9461",
+    "resetScenarios": "176:8943",
+    "resetSpec": "176:8941"
   },
   "typography": [
     {
@@ -52,7 +54,7 @@
     "padding": 16,
     "sectionSpacing": 16,
     "headerSpacing": 8,
-    "headerBottom": 8,
+    "headerBottom": 16,
     "rowSpacing": 4,
     "labelSpacing": 12,
     "valueSpacing": 2,
@@ -66,7 +68,11 @@
     "navIconSize": 16,
     "refreshIconSize": 10,
     "spinnerSize": 12,
-    "setupHeight": 325
+    "setupHeight": 333,
+    "controlRowSpacing": 2,
+    "errorPadding": 4,
+    "counterSize": 18,
+    "counterRadius": 6
   },
   "colors": {
     "Light": {

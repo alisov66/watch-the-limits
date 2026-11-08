@@ -66,6 +66,41 @@ enum PanelPresentationVerifier {
         NSApp.postEvent(outsideClick, atStart: false)
         try await Task.sleep(nanoseconds: 100_000_000)
         guard !panel.isVisible else { throw failure("A new outside click did not dismiss the panel.") }
+        NSApp.activate(ignoringOtherApps: true)
+        model.showAvailableResets = true
+        panel.show(relativeTo: button)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        guard let credit = model.resetCredits.first else { throw failure("No synthetic reset available.") }
+        model.activateReset(credit)
+        guard model.resetInteraction.confirmationID == credit.id else { throw failure("Reset did not enter confirmation.") }
+        let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                     timestamp: ProcessInfo.processInfo.systemUptime,
+                                     windowNumber: panel.windowNumber, context: nil,
+                                     characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                                     isARepeat: false, keyCode: 53)!
+        NSApp.postEvent(escape, atStart: false)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard !panel.isVisible, model.resetInteraction.confirmationID == nil else {
+            throw failure("Escape did not close the panel and cancel unconfirmed reset selection.")
+        }
+        panel.show(relativeTo: button)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard model.showAvailableResets, model.resetInteraction.confirmationID == nil else {
+            throw failure("Reopening did not preserve section expansion independently of confirmation.")
+        }
+        model.activateReset(credit)
+        model.activateReset(credit)
+        panel.close()
+        guard model.hasPendingReset else { throw failure("Closing cancelled the submitted reset.") }
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+        guard !model.hasPendingReset, model.resetSummary?.count == 1,
+              model.indicator.quotas.first?.value == "100%" else {
+            throw failure("Background reset did not finish and refresh the indicator.")
+        }
+        panel.show(relativeTo: button)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try verifyRoundedShell(panel)
+        print("Reset confirmation, Escape cancellation, remembered expansion, and background completion verified with synthetic data.")
         print("Panel presentation verification passed.")
     }
 

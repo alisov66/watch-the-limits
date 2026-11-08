@@ -6,6 +6,7 @@ import SwiftUI
 @MainActor
 final class GlassUsagePanel: NSPanel {
     private let host: NSHostingController<UsageView>
+    private let model: UsageModel
     private weak var anchor: NSStatusBarButton?
     private var sizeObservation: NSKeyValueObservation?
     private var localMonitor: Any?
@@ -14,6 +15,7 @@ final class GlassUsagePanel: NSPanel {
     private var openedAt: TimeInterval = 0
 
     init(model: UsageModel) {
+        self.model = model
         host = NSHostingController(rootView: UsageView(model: model))
         host.sizingOptions = [.preferredContentSize]
         super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -38,6 +40,7 @@ final class GlassUsagePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     func show(relativeTo button: NSStatusBarButton) {
+        model.panelDidOpen()
         openedAt = ProcessInfo.processInfo.systemUptime
         anchor = button
         resizeToContent()
@@ -71,8 +74,13 @@ final class GlassUsagePanel: NSPanel {
 
     private func startDismissalMonitoring() {
         stopDismissalMonitoring()
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            if event.type == .keyDown, event.keyCode == 53, let self {
+                self.close()
+                return nil
+            }
             if let self, event.timestamp > self.openedAt,
+               event.type != .keyDown,
                event.window !== self, event.window !== self.anchor?.window { self.close() }
             return event
         }
@@ -102,6 +110,7 @@ final class GlassUsagePanel: NSPanel {
     override func cancelOperation(_ sender: Any?) { close() }
 
     override func close() {
+        model.panelDidClose()
         stopDismissalMonitoring()
         orderOut(nil)
     }

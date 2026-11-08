@@ -13,6 +13,8 @@ Previously named **Codex Usage Bar**. The rename preserves existing preferences 
 - Remaining quota and reset countdowns for your account's Codex limit windows.
 - Automatic refresh every minute, on opening the popover, and after waking your Mac.
 - Optional launch at login.
+- Available earned resets, with inline confirmation, processing, and recovery after an uncertain result.
+- Independently remembered Settings and Available resets expansion across launches.
 - Choose both limits, five-hour only, or weekly only in Settings.
 - Original Figma artwork and typography, with a 24-point icon target that fits shorter menu bars and system-tinted two-tone artwork.
 - Native interface that follows your Mac's light or dark appearance.
@@ -54,9 +56,11 @@ These are account quota percentages, not token counts or dollar spending. Reset 
 
 ## Privacy
 
-The app starts a local `codex app-server` process and calls only the initialization handshake and `account/rateLimits/read`. Codex handles authentication and contacts its own service to retrieve your limits.
+The app starts a local `codex app-server` process to initialize the connection and call `account/rateLimits/read`. Only after you choose **Use reset** and then **Confirm reset**, it calls `account/rateLimitResetCredit/consume` for that selected reset. Codex handles authentication and contacts its own service. Older Codex versions or accounts that do not return reset information show **No data** for reset availability.
 
-The app does not open your authentication files, run model prompts, inspect your projects or conversations, or upload usage to a separate server. There is no app analytics or third-party library dependency. Its saved settings contain an optional Codex executable path and your menu bar display choice; launch-at-login is managed by macOS. Codex itself still uses its existing local configuration and storage.
+The app does not open your authentication files, run model prompts, inspect your projects or conversations, or upload usage to a separate server. There is no app analytics or third-party library dependency. Its saved settings contain an optional Codex executable path, your menu bar display choice, section expansion preferences, and reset identifiers with retry keys to avoid consuming another reset after an uncertain attempt. Launch-at-login is managed by macOS. Codex itself still uses its existing local configuration and storage.
+
+Settings and Available resets initially start collapsed, then remember your choices. Reset confirmation has no automatic timeout. Escape closes the panel and cancels an unconfirmed selection. A submitted reset finishes in the background if the panel closes; usage and reset availability refresh immediately afterward. A timeout is an unknown outcome, so the app refreshes to reconcile it and reuses the same retry key if you retry that selected reset. Reset errors remain visible until you submit another attempt, close the panel, or collapse Available resets.
 
 The integration uses the [documented Codex app-server protocol](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). That interface may evolve; update Codex if you encounter an unsupported response.
 

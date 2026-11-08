@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "UsageCore"),
         .executableTarget(name: "WatchTheLimits", dependencies: ["UsageCore"], resources: [.copy("Resources/Figma"), .copy("Resources/PanelColors.bundle")]),
-        .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"])
+        .testTarget(name: "UsageCoreTests", dependencies: ["UsageCore"]),
+        .testTarget(name: "WatchTheLimitsTests", dependencies: ["WatchTheLimits", "UsageCore"])
     ]
 )

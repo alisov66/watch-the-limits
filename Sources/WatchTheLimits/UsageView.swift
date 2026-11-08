@@ -14,6 +14,7 @@ struct UsageView: View {
                 setup
             } else {
                 limits
+                availableResets
                 settings
             }
             footer
@@ -22,6 +23,7 @@ struct UsageView: View {
         .fixedSize(horizontal: false, vertical: true)
         .foregroundStyle(PanelDesign.color("foreground"))
         .accessibilityIdentifier("usage-panel")
+        .onAppear { model.panelDidOpen() }
     }
 
     private var header: some View {
@@ -50,7 +52,7 @@ struct UsageView: View {
         if model.phase.showsRefreshFailure {
             HStack(spacing: layout.rowSpacing) {
                 PanelText("Couldn’t refresh")
-                    .foregroundStyle(PanelDesign.color("foreground-muted"))
+                    .foregroundStyle(PanelDesign.color("foreground"))
                     .help(model.errorMessage ?? "Could not refresh usage.")
                 Spacer(minLength: 0)
                 Button { model.refresh() } label: {
@@ -99,7 +101,7 @@ struct UsageView: View {
 
     private var settings: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsDisclosure(expanded: $model.showSettings)
+            PanelSectionHeader(title: "Settings", expanded: $model.showSettings)
                 .padding(layout.disclosurePadding)
             if model.showSettings {
                 VStack(alignment: .leading, spacing: layout.sectionSpacing) {
@@ -121,7 +123,7 @@ struct UsageView: View {
                             .accessibilityIdentifier("launch-at-login")
                     }
                     .frame(height: layout.controlHeight)
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: layout.controlRowSpacing) {
                         HStack(spacing: layout.labelSpacing) {
                             PanelText("Codex location", role: "Label")
                             Spacer(minLength: 0)
@@ -141,6 +143,73 @@ struct UsageView: View {
                 .padding(.bottom, layout.padding)
             }
         }
+    }
+
+    private var availableResets: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PanelSectionHeader(title: "Available resets", count: model.resetCount,
+                               stale: model.isStale, expanded: $model.showAvailableResets)
+                .padding(layout.disclosurePadding)
+            if model.showAvailableResets {
+                VStack(alignment: .leading, spacing: layout.sectionSpacing) {
+                    if model.resetSummary?.count == 0 || model.resetCredits.isEmpty {
+                        PanelText(model.resetSummary?.count == 0 ? "No available resets" : "No data")
+                            .foregroundStyle(PanelDesign.color("foreground-muted"))
+                            .frame(maxWidth: .infinity)
+                            .accessibilityIdentifier("reset-availability-message")
+                    } else {
+                        ForEach(model.resetCredits) { credit in
+                            resetRow(credit)
+                        }
+                    }
+                }
+                .padding(.horizontal, layout.padding)
+                .padding(.bottom, layout.padding)
+            }
+        }
+    }
+
+    private func resetRow(_ credit: ResetCredit) -> some View {
+        let confirming = model.resetInteraction.confirmationID == credit.id
+        let processing = model.resetInteraction.processing?.creditID == credit.id
+        let stale = model.isStale
+        return VStack(alignment: .leading, spacing: layout.controlRowSpacing) {
+            HStack(spacing: layout.labelSpacing) {
+                PanelText(credit.displayTitle, role: "Label")
+                    .foregroundStyle(PanelDesign.color(stale ? "foreground-subtle" : "foreground"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(credit.description ?? credit.displayTitle)
+                Button { model.activateReset(credit) } label: {
+                    HStack(spacing: layout.buttonSpacing) {
+                        if processing {
+                            ProgressView().controlSize(.mini)
+                                .frame(width: layout.spinnerSize, height: layout.spinnerSize)
+                                .accessibilityHidden(true)
+                        }
+                        Text(processing ? "Processing" : confirming ? "Confirm reset" : "Use reset")
+                    }
+                    .fixedSize()
+                }
+                .buttonStyle(PanelButtonStyle(prominent: confirming))
+                .disabled(!model.canUseReset(credit))
+                .accessibilityIdentifier("reset-action-" + credit.id)
+                .accessibilityLabel((confirming ? "Confirm reset: " : "Use reset: ") + credit.displayTitle)
+            }
+            .frame(height: layout.controlHeight)
+            if let expiration = credit.expirationText(at: model.now) {
+                PanelText(expiration)
+                    .foregroundStyle(PanelDesign.color(stale ? "foreground-subtle" : "foreground-muted"))
+                    .help(expiration)
+            }
+            if model.resetInteraction.errorID == credit.id {
+                PanelText("Couldn’t confirm reset")
+                    .foregroundStyle(PanelDesign.color(stale ? "foreground-subtle" : "foreground-muted"))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, layout.errorPadding)
+                    .accessibilityIdentifier("reset-error-" + credit.id)
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private var setup: some View {
@@ -189,7 +258,7 @@ private struct UsageLimitView: View {
         let expired = quota.window?.hasExpired(at: now) == true
         VStack(alignment: .leading, spacing: layout.rowSpacing) {
             HStack(spacing: layout.labelSpacing) {
-                PanelText(quota.title, role: "Body")
+                PanelText(quota.title, role: "Label")
                 Spacer(minLength: 0)
                 Group {
                     if let remaining {
@@ -230,7 +299,10 @@ private struct UsageLimitView: View {
     }
 }
 
-private struct SettingsDisclosure: View {
+private struct PanelSectionHeader: View {
+    let title: String
+    var count: Int? = nil
+    var stale = false
     @Binding var expanded: Bool
     @StateObject private var hover = PanelHoverState()
     @Environment(\.panelPreviewHover) private var previewHover
@@ -239,7 +311,16 @@ private struct SettingsDisclosure: View {
     var body: some View {
         Button { expanded.toggle() } label: {
             HStack(spacing: layout.rowSpacing) {
-                PanelText("Settings", role: "Label")
+                PanelText(title, role: "Label")
+                if let count {
+                    PanelText("\(count)")
+                        .foregroundStyle(PanelDesign.color(stale ? "foreground-subtle" : "foreground-muted"))
+                        .padding(.horizontal, layout.rowSpacing)
+                        .frame(minWidth: layout.counterSize, minHeight: layout.counterSize)
+                        .background(PanelDesign.color("control/fill"),
+                                    in: RoundedRectangle(cornerRadius: layout.counterRadius))
+                        .accessibilityLabel("\(count) available resets")
+                }
                 Spacer(minLength: 0)
                 Image(nsImage: PanelDesign.icon("nav-arrow"))
                     .frame(width: layout.navIconSize, height: layout.navIconSize)
@@ -256,7 +337,7 @@ private struct SettingsDisclosure: View {
         .buttonStyle(.plain)
         .onHover { hover.isHovered = $0 }
         .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-        .accessibilityIdentifier("toggle-settings")
+        .accessibilityIdentifier(title == "Settings" ? "toggle-settings" : "toggle-resets")
     }
 }
 

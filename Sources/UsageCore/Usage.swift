@@ -34,8 +34,23 @@ public struct UsageBucket: Decodable, Equatable, Sendable {
 }
 
 public struct UsageSnapshot: Decodable, Sendable {
+    public let accountId: String?
     public let rateLimits: UsageBucket?
     public let rateLimitsByLimitId: [String: UsageBucket]?
+    public let rateLimitResetCredits: ResetCreditsSummary?
+
+    private enum CodingKeys: String, CodingKey {
+        case accountId, rateLimits, rateLimitsByLimitId, rateLimitResetCredits
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        accountId = try values.decodeIfPresent(String.self, forKey: .accountId)
+        rateLimits = try values.decodeIfPresent(UsageBucket.self, forKey: .rateLimits)
+        rateLimitsByLimitId = try values.decodeIfPresent([String: UsageBucket].self, forKey: .rateLimitsByLimitId)
+        // Optional reset metadata must not make otherwise valid usage unavailable.
+        rateLimitResetCredits = try? values.decodeIfPresent(ResetCreditsSummary.self, forKey: .rateLimitResetCredits)
+    }
 
     public struct Entry: Identifiable, Sendable {
         public let id: String

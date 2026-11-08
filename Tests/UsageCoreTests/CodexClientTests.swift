@@ -62,4 +62,32 @@ final class CodexClientTests: XCTestCase {
         }
         await client.shutdown()
     }
+
+    func testResetUsesSelectedCreditAndIdempotencyKeyWithoutOtherMethods() async throws {
+        let fake = try executable(body: """
+        keys = set()
+        for line in sys.stdin:
+            r = json.loads(line)
+            if 'id' not in r: continue
+            if r['method'] == 'initialize': result = {}
+            elif r['method'] == 'account/rateLimitResetCredit/consume':
+                p = r['params']
+                assert p['creditId'] == 'selected-credit'
+                assert p['idempotencyKey'] == 'same-logical-attempt'
+                result = {'outcome': 'alreadyRedeemed' if p['idempotencyKey'] in keys else 'reset'}
+                keys.add(p['idempotencyKey'])
+            elif r['method'] == 'account/rateLimits/read':
+                result = {'rateLimits': {}, 'rateLimitResetCredits': {'availableCount': 0, 'credits': []}}
+            else: sys.exit(1)
+            print(json.dumps({'id': r['id'], 'result': result}), flush=True)
+        """)
+        let client = CodexClient()
+        let first = try await client.consumeReset(executablePath: fake.path, creditID: "selected-credit", idempotencyKey: "same-logical-attempt")
+        let retry = try await client.consumeReset(executablePath: fake.path, creditID: "selected-credit", idempotencyKey: "same-logical-attempt")
+        XCTAssertEqual(first, .reset)
+        XCTAssertEqual(retry, .alreadyRedeemed)
+        let refreshed = try await client.readLimits(executablePath: fake.path)
+        XCTAssertEqual(refreshed.rateLimitResetCredits?.count, 0)
+        await client.shutdown()
+    }
 }

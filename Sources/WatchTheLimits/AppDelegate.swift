@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var glassPanel: NSPanel?
@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     private let renderer = MenuBarRenderer()
     private var wakeObserver: NSObjectProtocol?
+    private var escapeMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -29,9 +30,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             glassPanel = GlassUsagePanel(model: model)
         } else {
             popover.behavior = .transient
+            popover.delegate = self
             let content = NSHostingController(rootView: UsageView(model: model))
             content.sizingOptions = [.preferredContentSize]
             popover.contentViewController = content
+            escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                if event.keyCode == 53, self?.popover.isShown == true {
+                    self?.popover.performClose(nil)
+                    return nil
+                }
+                return event
+            }
         }
         model.onChange = { [weak self] in self?.updateStatus() }
         updateStatus()
@@ -60,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPopover() {
         guard let button = statusItem.button else { return }
+        model.panelDidOpen()
         NSApp.activate(ignoringOtherApps: true)
         if #available(macOS 26.0, *), let panel = glassPanel as? GlassUsagePanel {
             panel.show(relativeTo: button)
@@ -69,7 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController?.view.window?.makeKey()
     }
 
+    func popoverDidClose(_ notification: Notification) { model.panelDidClose() }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         Task {
             await model.shutdown()
             sender.reply(toApplicationShouldTerminate: true)

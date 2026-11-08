@@ -7,6 +7,8 @@ enum PanelPreviewScenario: String, CaseIterable {
     case loading, ready, refreshFailed = "refresh-failed", refreshFailedEmpty = "refresh-failed-empty"
     case retrying, retryingEmpty = "retrying-empty", codexMissing = "codex-missing", signInRequired = "sign-in-required"
     case expired
+    case noResets = "no-resets", resetConfirm = "reset-confirm", resetProcessing = "reset-processing"
+    case resetError = "reset-error", resetSuccess = "reset-success"
 }
 
 @MainActor
@@ -17,20 +19,39 @@ final class UsageModel: ObservableObject {
     @Published var isRefreshing = false
     @Published var lastUpdated: Date?
     @Published var now = Date()
-    @Published var showSettings = false
-    @Published var menuBarDisplay = MenuBarDisplay(rawValue: UserDefaults.standard.string(forKey: "menuBarDisplay") ?? "") ?? .both
-    @Published var customPath = UserDefaults.standard.string(forKey: "codexPath") ?? ""
+    @Published var showSettings = false {
+        didSet { if !isDemo { preferences.set(showSettings, forKey: "showSettings") } }
+    }
+    @Published var showAvailableResets = false {
+        didSet {
+            if !isDemo { preferences.set(showAvailableResets, forKey: "showAvailableResets") }
+            if !showAvailableResets { resetInteraction.dismissTransient() }
+        }
+    }
+    @Published var resetInteraction: ResetInteraction
+    @Published var menuBarDisplay: MenuBarDisplay
+    @Published var customPath: String
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     var onChange: (() -> Void)?
-    private let client = CodexClient()
+    private let client: any CodexUsageService
+    private let preferences: UserDefaults
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
+    private var resetTask: Task<Void, Never>?
+    private var panelIsOpen = false
     private var lastAttempt: Date?
     let isDemo: Bool
 
-    init(demo: Bool = false, preview: PanelPreviewScenario? = nil, expanded: Bool = false) {
+    init(demo: Bool = false, preview: PanelPreviewScenario? = nil, expanded: Bool = false,
+         client: any CodexUsageService = CodexClient(), preferences: UserDefaults = .standard) {
+        self.client = client
+        self.preferences = preferences
         isDemo = demo || preview != nil
-        showSettings = expanded
+        resetInteraction = ResetInteraction(retryKeys: isDemo ? [:] : preferences.dictionary(forKey: "resetRetryKeys") as? [String: String] ?? [:])
+        menuBarDisplay = MenuBarDisplay(rawValue: preferences.string(forKey: "menuBarDisplay") ?? "") ?? .both
+        customPath = preferences.string(forKey: "codexPath") ?? ""
+        showSettings = isDemo ? expanded : preferences.bool(forKey: "showSettings")
+        showAvailableResets = isDemo ? expanded : preferences.bool(forKey: "showAvailableResets")
         if isDemo {
             configurePreview(preview ?? .ready)
         } else {
@@ -53,6 +74,63 @@ final class UsageModel: ObservableObject {
 
     var planTitle: String? { snapshot?.panelBucket?.planType?.capitalized }
     var quotas: [PanelQuota] { snapshot?.panelQuotas ?? UsageSnapshot.emptyPanelQuotas }
+    var resetSummary: ResetCreditsSummary? { snapshot?.rateLimitResetCredits }
+    var resetCount: Int? { resetSummary.map(\.count).flatMap { $0 > 0 ? $0 : nil } }
+    var resetCredits: [ResetCredit] {
+        guard resetSummary?.count != 0 else { return [] }
+        return resetSummary?.credits?.filter { $0.status == "available" || $0.id == resetInteraction.processing?.creditID } ?? []
+    }
+    var hasPendingReset: Bool { resetTask != nil || resetInteraction.processing != nil }
+
+    func canUseReset(_ credit: ResetCredit) -> Bool {
+        !hasPendingReset && !isStale && credit.isUsable(at: now)
+            && !resetInteraction.consumedIDs.contains(credit.id)
+    }
+
+    func panelDidOpen() { panelIsOpen = true }
+
+    func panelDidClose() {
+        panelIsOpen = false
+        resetInteraction.dismissTransient()
+    }
+
+    func activateReset(_ credit: ResetCredit) {
+        guard canUseReset(credit) else { return }
+        guard resetInteraction.confirmationID == credit.id else {
+            resetInteraction.select(credit.id)
+            return
+        }
+        guard let attempt = resetInteraction.begin(credit.id) else { return }
+        saveResetKeys()
+        let path = executablePath
+        let account = snapshot?.accountId
+        resetTask = Task {
+            // Finish an earlier read first; a read failure must not interrupt a submitted reset.
+            await refreshTask?.value
+            var outcome: ResetOutcome?
+            if isDemo {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                let expanded = showAvailableResets
+                configurePreview(.resetSuccess)
+                showAvailableResets = expanded
+                outcome = .reset
+            } else if let path, path == executablePath, account == snapshot?.accountId,
+                      !isStale, resetCredits.contains(where: { $0.id == credit.id && $0.isUsable(at: now) }) {
+                do { outcome = try await client.consumeReset(executablePath: path, creditID: credit.id,
+                                                             idempotencyKey: attempt.idempotencyKey) }
+                catch { /* Unknown outcome: preserve the key and reconcile with a fresh read. */ }
+            }
+            resetInteraction.finish(attempt, outcome: outcome, showError: panelIsOpen && showAvailableResets)
+            saveResetKeys()
+            if !isDemo { await fetchUsage() }
+            resetTask = nil
+            onChange?()
+        }
+    }
+
+    private func saveResetKeys() {
+        if !isDemo { preferences.set(resetInteraction.retryKeys, forKey: "resetRetryKeys") }
+    }
 
     var indicator: MenuBarIndicator {
         MenuBarIndicator(snapshot: snapshot, display: menuBarDisplay, isStale: isStale, now: now)
@@ -60,7 +138,7 @@ final class UsageModel: ObservableObject {
 
     func setMenuBarDisplay(_ display: MenuBarDisplay) {
         menuBarDisplay = display
-        if !isDemo { UserDefaults.standard.set(display.rawValue, forKey: "menuBarDisplay") }
+        if !isDemo { preferences.set(display.rawValue, forKey: "menuBarDisplay") }
         onChange?()
     }
 
@@ -78,7 +156,7 @@ final class UsageModel: ObservableObject {
     }
 
     func refresh() {
-        guard !isRefreshing else { return }
+        guard !isRefreshing, !hasPendingReset else { return }
         if isDemo {
             isRefreshing = true
             refreshTask = Task {
@@ -89,7 +167,13 @@ final class UsageModel: ObservableObject {
             }
             return
         }
+        isRefreshing = true
+        refreshTask = Task { await fetchUsage() }
+    }
+
+    private func fetchUsage() async {
         lastAttempt = Date()
+        defer { isRefreshing = false; onChange?() }
         guard let path = executablePath else {
             failure = .codexMissing
             errorMessage = CodexError.missingExecutable.localizedDescription
@@ -99,24 +183,23 @@ final class UsageModel: ObservableObject {
         // Retry setup as a fresh load, preserving ordinary failures until recovery.
         if failure == .codexMissing || failure == .signInRequired { failure = nil; errorMessage = nil }
         isRefreshing = true
-        refreshTask = Task {
-            defer { isRefreshing = false; onChange?() }
-            do {
-                let next = try await client.readLimits(executablePath: path)
-                guard next.panelBucket?.windows.isEmpty == false else {
-                    failure = .refresh
-                    errorMessage = "Codex returned no usage limits for this account."
-                    return
-                }
-                snapshot = next
-                lastUpdated = Date()
-                now = Date()
-                failure = nil
-                errorMessage = nil
-            } catch {
-                failure = PanelFailure(error: error)
-                errorMessage = error.localizedDescription
+        do {
+            let next = try await client.readLimits(executablePath: path)
+            guard path == executablePath else { return }
+            guard next.panelBucket?.windows.isEmpty == false else {
+                failure = .refresh
+                errorMessage = "Codex returned no usage limits for this account."
+                return
             }
+            snapshot = next
+            resetInteraction.reconcile(next.rateLimitResetCredits)
+            lastUpdated = Date()
+            now = Date()
+            failure = nil
+            errorMessage = nil
+        } catch {
+            failure = PanelFailure(error: error)
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -129,7 +212,7 @@ final class UsageModel: ObservableObject {
         panel.showsHiddenFiles = true
         if panel.runModal() == .OK, let url = panel.url {
             customPath = url.path
-            if !isDemo { UserDefaults.standard.set(customPath, forKey: "codexPath") }
+            if !isDemo { preferences.set(customPath, forKey: "codexPath") }
             refresh()
         }
     }
@@ -151,11 +234,13 @@ final class UsageModel: ObservableObject {
 
     func shutdown() async {
         timer?.invalidate()
+        // Let an explicitly confirmed reset settle before shutting down its transport.
+        await resetTask?.value
         refreshTask?.cancel()
         await client.shutdown()
     }
 
-    private func configurePreview(_ scenario: PanelPreviewScenario) {
+    func configurePreview(_ scenario: PanelPreviewScenario) {
         menuBarDisplay = .fiveHour
         launchAtLogin = true
         failure = nil
@@ -164,13 +249,25 @@ final class UsageModel: ObservableObject {
         snapshot = nil
         lastUpdated = nil
         now = Date()
-        if [.ready, .refreshFailed, .retrying, .expired].contains(scenario) {
+        resetInteraction = ResetInteraction()
+        if [.ready, .refreshFailed, .retrying, .expired, .noResets, .resetConfirm, .resetProcessing, .resetError, .resetSuccess].contains(scenario) {
             let firstReset = now.addingTimeInterval(scenario == .expired ? -10 : 8460).timeIntervalSince1970
             let secondReset = now.addingTimeInterval(576000).timeIntervalSince1970
+            let used = scenario == .resetSuccess ? 0 : 50
+            let count = scenario == .noResets ? 0 : scenario == .resetSuccess ? 1 : 2
+            let resetDate = now.addingTimeInterval(30 * 86400).timeIntervalSince1970
+            let credit1 = """
+            {"id":"preview-1","resetType":"codexRateLimits","status":"available","grantedAt":0,"expiresAt":\(resetDate),"title":"Full reset (Weekly + 5 hr)"}
+            """
+            let credit2 = """
+            {"id":"preview-2","resetType":"codexRateLimits","status":"available","grantedAt":0,"expiresAt":\(resetDate + 86400 * 30),"title":"Full reset (Weekly + 5 hr)"}
+            """
+            let credits = count == 0 ? "" : count == 1 ? credit2 : credit1 + "," + credit2
             snapshot = try! JSONDecoder().decode(UsageSnapshot.self, from: Data("""
             {"rateLimits":{"limitId":"codex","planType":"plus",
-            "primary":{"usedPercent":50,"windowDurationMins":300,"resetsAt":\(firstReset)},
-            "secondary":{"usedPercent":50,"windowDurationMins":10080,"resetsAt":\(secondReset)}}}
+            "primary":{"usedPercent":\(used),"windowDurationMins":300,"resetsAt":\(scenario == .resetSuccess ? now.addingTimeInterval(17940).timeIntervalSince1970 : firstReset)},
+            "secondary":{"usedPercent":\(used),"windowDurationMins":10080,"resetsAt":\(scenario == .resetSuccess ? now.addingTimeInterval(601200).timeIntervalSince1970 : secondReset)}},
+            "rateLimitResetCredits":{"availableCount":\(count),"credits":[\(credits)]}}
             """.utf8))
             lastUpdated = now
         }
@@ -180,7 +277,15 @@ final class UsageModel: ObservableObject {
         case .retrying, .retryingEmpty: failure = .refresh; isRefreshing = true
         case .codexMissing: failure = .codexMissing
         case .signInRequired: failure = .signInRequired
-        case .ready, .expired: break
+        case .resetConfirm: resetInteraction.select("preview-1")
+        case .resetProcessing:
+            resetInteraction.select("preview-1")
+            _ = resetInteraction.begin("preview-1")
+        case .resetError:
+            resetInteraction.select("preview-1")
+            let attempt = resetInteraction.begin("preview-1")!
+            resetInteraction.finish(attempt, outcome: nil, showError: true)
+        case .ready, .expired, .noResets, .resetSuccess: break
         }
     }
 }

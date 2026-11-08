@@ -22,6 +22,7 @@ struct PanelDesign: Decodable {
         let rowSpacing, labelSpacing, valueSpacing, resetSpacing: CGFloat
         let controlHeight, controlRadius, controlPadding, buttonSpacing, disclosurePadding: CGFloat
         let progressHeight, navIconSize, refreshIconSize, spinnerSize, setupHeight: CGFloat
+        let controlRowSpacing, errorPadding, counterSize, counterRadius: CGFloat
     }
 
     let typography: [Typography]
@@ -91,10 +92,12 @@ struct PanelText: View {
 }
 
 struct PanelButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View { Chrome(configuration: configuration) }
+    var prominent = false
+    func makeBody(configuration: Configuration) -> some View { Chrome(configuration: configuration, prominent: prominent) }
 
     private struct Chrome: View {
         let configuration: ButtonStyle.Configuration
+        let prominent: Bool
         @Environment(\.isEnabled) private var enabled
         @Environment(\.panelPreviewHover) private var previewHover
         @StateObject private var hover = PanelHoverState()
@@ -103,10 +106,10 @@ struct PanelButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .font(PanelDesign.shared.textStyle("Button").font)
-                .foregroundStyle(PanelDesign.color(enabled ? "control/foreground" : "control/foreground-disabled"))
+                .foregroundStyle(PanelDesign.color(enabled ? (prominent ? "foreground-on-fill" : "control/foreground") : "control/foreground-disabled"))
                 .padding(.horizontal, layout.controlPadding)
                 .frame(height: layout.controlHeight)
-                .background(PanelDesign.color(enabled && (previewHover || hover.isHovered || configuration.isPressed) ? "control/fill-hover" : "control/fill"),
+                .background(PanelDesign.color(enabled && prominent ? "control/fill-selected" : enabled && (previewHover || hover.isHovered || configuration.isPressed) ? "control/fill-hover" : "control/fill"),
                             in: RoundedRectangle(cornerRadius: layout.controlRadius))
                 .contentShape(RoundedRectangle(cornerRadius: layout.controlRadius))
                 .onHover { hover.isHovered = $0 }
