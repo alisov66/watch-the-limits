@@ -5,6 +5,9 @@
     "resetScenarios": "176:8943",
     "resetSpec": "176:8941"
   },
+  "motion": {
+    "sectionDuration": 0.3
+  },
   "typography": [
     {
       "name": "Panel/Title",

@@ -103,7 +103,7 @@ struct UsageView: View {
         VStack(alignment: .leading, spacing: 0) {
             PanelSectionHeader(title: "Settings", expanded: $model.showSettings)
                 .padding(layout.disclosurePadding)
-            if model.showSettings {
+            CollapsibleSectionContent(expanded: model.showSettings) {
                 VStack(alignment: .leading, spacing: layout.sectionSpacing) {
                     HStack(spacing: layout.labelSpacing) {
                         PanelText("Menu bar", role: "Label")
@@ -150,7 +150,7 @@ struct UsageView: View {
             PanelSectionHeader(title: "Available resets", count: model.resetCount,
                                stale: model.isStale, expanded: $model.showAvailableResets)
                 .padding(layout.disclosurePadding)
-            if model.showAvailableResets {
+            CollapsibleSectionContent(expanded: model.showAvailableResets) {
                 VStack(alignment: .leading, spacing: layout.sectionSpacing) {
                     if model.resetSummary?.count == 0 || model.resetCredits.isEmpty {
                         PanelText(model.resetSummary?.count == 0 ? "No available resets" : "No data")
@@ -299,6 +299,45 @@ private struct UsageLimitView: View {
     }
 }
 
+/// Preserve the content's natural layout while animating its clipped viewport height.
+private struct CollapsibleSectionContent<Content: View>: View {
+    let expanded: Bool
+    @ViewBuilder let content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.panelPreviewReduceMotion) private var previewReduceMotion
+
+    var body: some View {
+        SectionRevealLayout(progress: expanded ? 1 : 0) {
+            content
+        }
+            .clipped()
+            .allowsHitTesting(expanded)
+            .disabled(!expanded)
+            .accessibilityHidden(!expanded)
+            .animation(reduceMotion || previewReduceMotion ? nil : PanelDesign.shared.motion.sectionAnimation, value: expanded)
+    }
+}
+
+private struct SectionRevealLayout: Layout {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let natural = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: natural.width, height: natural.height * progress)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                             proposal: ProposedViewSize(width: bounds.width, height: nil))
+    }
+}
+
 private struct PanelSectionHeader: View {
     let title: String
     var count: Int? = nil
@@ -306,6 +345,8 @@ private struct PanelSectionHeader: View {
     @Binding var expanded: Bool
     @StateObject private var hover = PanelHoverState()
     @Environment(\.panelPreviewHover) private var previewHover
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.panelPreviewReduceMotion) private var previewReduceMotion
     private let layout = PanelDesign.shared.layout
 
     var body: some View {
@@ -326,6 +367,7 @@ private struct PanelSectionHeader: View {
                     .frame(width: layout.navIconSize, height: layout.navIconSize)
                     .foregroundStyle(PanelDesign.color("control/foreground"))
                     .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .animation(reduceMotion || previewReduceMotion ? nil : PanelDesign.shared.motion.sectionAnimation, value: expanded)
                     .accessibilityHidden(true)
             }
             .foregroundStyle(PanelDesign.color("foreground-muted"))

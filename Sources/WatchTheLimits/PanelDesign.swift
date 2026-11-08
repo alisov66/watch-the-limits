@@ -25,8 +25,14 @@ struct PanelDesign: Decodable {
         let controlRowSpacing, errorPadding, counterSize, counterRadius: CGFloat
     }
 
+    struct Motion: Decodable {
+        let sectionDuration: TimeInterval
+        var sectionAnimation: Animation { .easeOut(duration: sectionDuration) }
+    }
+
     let typography: [Typography]
     let layout: Layout
+    let motion: Motion
     let colors: [String: [String: RGBA]]
 
     struct RGBA: Decodable {
@@ -153,7 +159,17 @@ private struct PanelPreviewHoverKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+/// Exercise the same reduced-motion path without changing the user's system preference.
+private struct PanelPreviewReduceMotionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
+    var panelPreviewReduceMotion: Bool {
+        get { self[PanelPreviewReduceMotionKey.self] }
+        set { self[PanelPreviewReduceMotionKey.self] = newValue }
+    }
+
     var panelPreviewHover: Bool {
         get { self[PanelPreviewHoverKey.self] }
         set { self[PanelPreviewHoverKey.self] = newValue }

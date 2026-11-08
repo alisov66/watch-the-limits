@@ -24,6 +24,8 @@ Reset scenarios: https://www.figma.com/design/zCrkvUn8WyWUKH3YYn6QB0?node-id=176
 
 Reset behavior: https://www.figma.com/design/zCrkvUn8WyWUKH3YYn6QB0?node-id=176-8941
 
+- Section motion comes from the prototype reactions on Available resets (`126:8938`) and Settings (`126:9142`): Smart Animate, ease-out, 300 ms in both directions. `panel-tokens.json` records the duration. The shared native layout animates its clipped height and disclosure rotation, lets the hosting window follow the intermediate sizes, and disables animation under Reduce Motion. Hidden content is not interactive or exposed to accessibility.
+
 - `panel-tokens.json` records the approved layout, resolved light/dark color variables, and six `Panel` text styles. SF Pro maps to the public system font at the design's explicit sizes and weights; font files are not distributed.
 - `panel-nav-arrow.svg` is the original 16 × 16 design-context export used by the Settings disclosure. `panel-refresh.svg` is the original 10 × 10 retry icon. Both retain their exported geometry and render as system-tinted templates.
 - Named panel colors live in `Resources/PanelColors.xcassets`. The checked-in `PanelColors.bundle` contains their compiled asset catalog for Swift package builds. After changing the source catalog, run `bash scripts/build-panel-colors.sh`; normal builds verify its source checksum.
